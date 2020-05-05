@@ -48,6 +48,8 @@ type TripUpdateResponse {
   message: String
   launches: [Launch]
 }
+
+
 `;
 
 module.exports = typeDefs;
