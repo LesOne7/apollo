@@ -1,5 +1,4 @@
-﻿const port = process.env.PORT || 4000;
-
+﻿
 const { ApolloServer } = require('apollo-server');
 const typeDefs = require('./schema');
 const { createStore } = require('./utils');
@@ -36,4 +35,3 @@ server.listen().then(({ url }) => {
     console.log(`🚀 Server ready at ${url}`);
 });
 
-app.listen(port);
