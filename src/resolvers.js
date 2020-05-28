@@ -1,10 +1,27 @@
 const { paginateResults } = require('./utils');
+const stripe = require('stripe')('sk_test_J4BhpL7ZYwJSwYN8u8V2ImWD00D5MP2PZV');
+
+const pay = async (cardToken, launches) => {
+    try {
+        let intent = await stripe.paymentIntents.create({
+            amount: 999999999.00 * launches,
+            currency: 'usd',
+            payment_method: cardToken,
+            confirm: true,
+            error_on_requires_action: true
+        });
+
+        if (intent.status === 'succeeded') return true;
+        else return false;
+    } catch (e) {
+        return false;
+    }
+}
 
 module.exports = {
     Query: {
         launches: async (_, { pageSize = 20, after }, { dataSources }) => {
             const allLaunches = await dataSources.launchAPI.getAllLaunches();
-            // we want these in reverse chronological order
             allLaunches.reverse();
 
             const launches = paginateResults({
@@ -16,8 +33,6 @@ module.exports = {
             return {
                 launches,
                 cursor: launches.length ? launches[launches.length - 1].cursor : null,
-                // if the cursor of the end of the paginated results is the same as the
-                // last item in _all_ results, then there are no more results after this
                 hasMore: launches.length
                     ? launches[launches.length - 1].cursor !==
                     allLaunches[allLaunches.length - 1].cursor
@@ -30,22 +45,36 @@ module.exports = {
             dataSources.userAPI.findOrCreateUser(),
     },
     Mutation: {
-        bookTrips: async (_, { launchIds }, { dataSources }) => {
-            const results = await dataSources.userAPI.bookTrips({ launchIds });
-            const launches = await dataSources.launchAPI.getLaunchesByIds({
-                launchIds,
-            });
+        bookTrips: async (_, { launchIds, cardToken }, { dataSources }) => {
+            const payResult = await pay(cardToken, launchIds.length);
 
-            return {
-                success: results && results.length === launchIds.length,
-                message:
-                    results.length === launchIds.length
-                        ? 'trips booked successfully'
-                        : `the following launches couldn't be booked: ${launchIds.filter(
-                            id => !results.includes(id),
-                        )}`,
-                launches,
-            };
+            if (payResult) {
+                const results = await dataSources.userAPI.bookTrips({ launchIds });
+                const launches = await dataSources.launchAPI.getLaunchesByIds({
+                    launchIds,
+                });
+
+
+
+                return {
+                    success: results && results.length === launchIds.length,
+                    message:
+                        results.length === launchIds.length
+                            ? `trips booked successfully, ${launches.length * 100.00}$ debited`
+                            : `the following launches couldn't be booked: ${launchIds.filter(
+                                id => !results.includes(id),
+                            )}`,
+                    launches,
+                };
+            }
+            else {
+                return {
+                    success: false,
+                    message: "Error! Not enough money on the card",
+                    launches,
+                };
+            }
+
         },
         cancelTrip: async (_, { launchId }, { dataSources }) => {
             const result = dataSources.userAPI.cancelTrip({ launchId });
@@ -67,27 +96,26 @@ module.exports = {
             const user = await dataSources.userAPI.findOrCreateUser({ email });
             if (user) return new Buffer(email).toString('base64');
         },
+        uploadProfileImage: async (_, { file }, { dataSources }) =>
+            dataSources.userAPI.uploadProfileImage({ file }),
+    },
+    Launch: {
+        isBooked: async (launch, _, { dataSources }) =>
+            dataSources.userAPI.isBookedOnLaunch({ launchId: launch.id }),
     },
     Mission: {
-        // make sure the default size is 'large' in case user doesn't specify
         missionPatch: (mission, { size } = { size: 'LARGE' }) => {
             return size === 'SMALL'
                 ? mission.missionPatchSmall
                 : mission.missionPatchLarge;
         },
     },
-    Launch: {
-        isBooked: async (launch, _, { dataSources }) =>
-            dataSources.userAPI.isBookedOnLaunch({ launchId: launch.id }),
-    },
     User: {
         trips: async (_, __, { dataSources }) => {
-            // get ids of launches by user
             const launchIds = await dataSources.userAPI.getLaunchIdsByUser();
 
             if (!launchIds.length) return [];
 
-            // look up those launches by their ids
             return (
                 dataSources.launchAPI.getLaunchesByIds({
                     launchIds,
